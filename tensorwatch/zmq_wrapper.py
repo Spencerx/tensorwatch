@@ -4,6 +4,9 @@
 import zmq
 import errno
 import pickle
+import hmac
+import hashlib
+import os
 from zmq.eventloop import ioloop, zmqstream
 import zmq.utils.monitor
 import functools, sys, logging
@@ -17,6 +20,39 @@ class ZmqWrapper:
     _ioloop:ioloop.IOLoop = None
     _start_event:Event = None
     _ioloop_block:Event = None # indicates if there is any blocking IOLoop call in progress
+    _hmac_key:bytes = None
+
+    @staticmethod
+    def get_hmac_key() -> bytes:
+        """Get or generate the HMAC signing key used to authenticate ZMQ messages.
+        Set ZmqWrapper._hmac_key before calling initialize() to use a specific
+        key (e.g. for multi-process setups where Watcher and WatcherClient run
+        in separate processes).
+        """
+        if ZmqWrapper._hmac_key is None:
+            ZmqWrapper._hmac_key = os.urandom(32)
+        return ZmqWrapper._hmac_key
+
+    @staticmethod
+    def sign_and_dumps(obj) -> bytes:
+        """Serialize obj with pickle and prepend an HMAC-SHA256 signature."""
+        payload = pickle.dumps(obj)
+        sig = hmac.new(ZmqWrapper.get_hmac_key(), payload, hashlib.sha256).digest()
+        return sig + payload
+
+    @staticmethod
+    def verify_and_loads(signed_data: bytes):
+        """Verify HMAC-SHA256 signature and deserialize with pickle.
+        Raises ValueError if the signature does not match.
+        """
+        if len(signed_data) < 32:
+            raise ValueError("Message too short to contain HMAC signature")
+        sig = signed_data[:32]
+        payload = signed_data[32:]
+        expected = hmac.new(ZmqWrapper.get_hmac_key(), payload, hashlib.sha256).digest()
+        if not hmac.compare_digest(sig, expected):
+            raise ValueError("HMAC verification failed - rejecting untrusted message")
+        return pickle.loads(payload)
 
     @staticmethod
     def initialize():
@@ -107,7 +143,7 @@ class ZmqWrapper:
             ZmqWrapper._ioloop.add_callback(f_wrapped)
 
     class Publication:
-        def __init__(self, port, host='*', block_until_connected=True):
+        def __init__(self, port, host='127.0.0.1', block_until_connected=True):
             # define vars
             self._socket = None
             self._mon_socket = None
@@ -138,8 +174,8 @@ class ZmqWrapper:
             return self._socket.send_multipart(parts)
 
         def send_obj(self, obj, topic=''):
-            ZmqWrapper._io_loop_call(False, self._send_multipart, 
-                [topic.encode(), pickle.dumps(obj)])
+            ZmqWrapper._io_loop_call(False, self._send_multipart,
+                [topic.encode(), ZmqWrapper.sign_and_dumps(obj)])
 
         def _on_mon(self, msg):
             ev = zmq.utils.monitor.parse_monitor_message(msg)
@@ -172,7 +208,7 @@ class ZmqWrapper:
                 [topic, obj_s] = msg # pylint: disable=unused-variable
                 try:
                     if weak_callback and weak_callback():
-                        weak_callback()(pickle.loads(obj_s))
+                        weak_callback()(ZmqWrapper.verify_and_loads(obj_s))
                 except Exception as ex:
                     logging.exception('Error in subscription callback')
                     raise
@@ -202,8 +238,8 @@ class ZmqWrapper:
         def _receive_obj(self):
             [topic, obj_s] = self._socket.recv_multipart() # pylint: disable=unbalanced-tuple-unpacking
             if topic != self.topic:
-                raise ValueError('Expected topic: %s, Received topic: %s' % (topic, self.topic)) 
-            return pickle.loads(obj_s)
+                raise ValueError('Expected topic: %s, Received topic: %s' % (topic, self.topic))
+            return ZmqWrapper.verify_and_loads(obj_s)
 
         def receive_obj(self):
             return ZmqWrapper._io_loop_call(True, self._receive_obj)
@@ -239,13 +275,13 @@ class ZmqWrapper:
 
                 [obj_s] = msg
                 try:
-                    ret = callback(self, pickle.loads(obj_s))
+                    ret = callback(self, ZmqWrapper.verify_and_loads(obj_s))
                     # we must send reply to complete the cycle
-                    self._socket.send_multipart([pickle.dumps((ret, None))])
+                    self._socket.send_multipart([ZmqWrapper.sign_and_dumps((ret, None))])
                 except Exception as ex:
                     logging.exception('ClientServer call raised exception')
                     # we must send reply to complete the cycle
-                    self._socket.send_multipart([pickle.dumps((None, ex))])
+                    self._socket.send_multipart([ZmqWrapper.sign_and_dumps((None, ex))])
                 
                 utils.debug_log('Server sent response', verbosity=6)
                 
@@ -274,12 +310,12 @@ class ZmqWrapper:
 
         def send_obj(self, obj):
             ZmqWrapper._io_loop_call(False, self._socket.send_multipart,
-                [pickle.dumps(obj)])
+                [ZmqWrapper.sign_and_dumps(obj)])
 
         def receive_obj(self):
             # pylint: disable=unpacking-non-sequence
             [obj_s] = ZmqWrapper._io_loop_call(True, self._socket.recv_multipart)
-            return pickle.loads(obj_s)
+            return ZmqWrapper.verify_and_loads(obj_s)
 
         def request(self, req_obj):
             utils.debug_log('Client sending request...', verbosity=6)

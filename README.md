@@ -18,7 +18,24 @@ TensorWatch supports Python 3.x and is tested with PyTorch 0.4-1.x. Most feature
 
 ### Security Notice
 
-> **Caution:** TensorWatch persists stream data with Python's `pickle` serialization. Unpickling content from untrusted sources can execute arbitrary code. Only open TensorWatch pickle files (for example `.log` or `.pkl`) that you created yourself or that come from a source you fully trust.
+> **Caution:** TensorWatch uses Python's `pickle` serialization for both file
+> persistence and network communication over ZeroMQ sockets. Pickle
+> deserialization can execute arbitrary code.
+>
+> - **Files:** Only open TensorWatch pickle files (`.log`, `.pkl`) that you
+>   created yourself or that come from a source you fully trust.
+> - **Network:** When `tw.Watcher()` is instantiated, it opens local TCP
+>   sockets (default ports 40859 and 41459) for real-time streaming and the
+>   Lazy Logging query interface. Messages are HMAC-signed to reject payloads
+>   from unauthorized processes, but the Lazy Logging feature intentionally
+>   evaluates Python expressions sent by connected clients. **Do not expose
+>   TensorWatch ports to untrusted networks or users.** TensorWatch is a
+>   development and debugging tool and should not be used in production or
+>   multi-tenant environments.
+> - **Lazy Logging:** The `expr` parameter in `create_stream()` is evaluated
+>   with Python's `eval()`. This is by design to enable interactive debugging,
+>   but it means any client that can authenticate and connect can execute
+>   arbitrary Python code in the Watcher process.
 
 ## How to Use It
 
