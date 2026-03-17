@@ -18,24 +18,69 @@ TensorWatch supports Python 3.x and is tested with PyTorch 0.4-1.x. Most feature
 
 ### Security Notice
 
-> **Caution:** TensorWatch uses Python's `pickle` serialization for both file
-> persistence and network communication over ZeroMQ sockets. Pickle
-> deserialization can execute arbitrary code.
+> **⚠ Important: TensorWatch is a development and debugging tool. It is not
+> designed for production, multi-tenant, or adversarial environments.**
 >
-> - **Files:** Only open TensorWatch pickle files (`.log`, `.pkl`) that you
->   created yourself or that come from a source you fully trust.
-> - **Network:** When `tw.Watcher()` is instantiated, it opens local TCP
->   sockets (default ports 40859 and 41459) for real-time streaming and the
->   Lazy Logging query interface. Messages are HMAC-signed to reject payloads
->   from unauthorized processes, but the Lazy Logging feature intentionally
->   evaluates Python expressions sent by connected clients. **Do not expose
->   TensorWatch ports to untrusted networks or users.** TensorWatch is a
->   development and debugging tool and should not be used in production or
->   multi-tenant environments.
-> - **Lazy Logging:** The `expr` parameter in `create_stream()` is evaluated
->   with Python's `eval()`. This is by design to enable interactive debugging,
->   but it means any client that can authenticate and connect can execute
->   arbitrary Python code in the Watcher process.
+> TensorWatch has several features that, by design, can execute arbitrary code.
+> Users must understand these risks before deploying it.
+>
+> #### 1. Lazy Logging — `eval()` on Network-Supplied Expressions (CWE-94)
+>
+> The Lazy Logging feature (`create_stream(expr=...)`) sends a Python expression
+> from a `WatcherClient` to a `Watcher` server over ZeroMQ. The server executes
+> this expression via Python's `eval()` (in `evaler.py`). **This is by design**
+> — it enables interactive debugging by letting clients query the live training
+> process with arbitrary Python expressions. However, any authenticated client
+> that can connect to the Watcher's ZMQ port can execute arbitrary Python code
+> in the Watcher process.
+>
+> **Mitigations in place:**
+> - Messages are HMAC-SHA256 signed; only processes sharing the key can send
+>   expressions.
+> - The Watcher binds to `127.0.0.1` (localhost) by default, preventing remote
+>   connections unless explicitly configured otherwise.
+>
+> **User responsibilities:**
+> - **Do not expose TensorWatch ports to untrusted networks or users.**
+> - In multi-process setups (separate Watcher and WatcherClient processes), set
+>   `ZmqWrapper._hmac_key` to a shared secret before calling `initialize()` so
+>   that HMAC authentication is effective across processes.
+> - Do not run TensorWatch on machines where untrusted users have local network
+>   access.
+>
+> #### 2. Pickle Deserialization — Network (CWE-502)
+>
+> All ZeroMQ messages are serialized/deserialized using Python's `pickle`
+> module. Pickle deserialization can execute arbitrary code if given a crafted
+> payload.
+>
+> **Mitigations in place:**
+> - All incoming ZMQ messages are HMAC-SHA256 verified **before**
+>   deserialization (`ZmqWrapper.verify_and_loads`). Messages with invalid
+>   signatures are rejected without being deserialized.
+>
+> **User responsibilities:**
+> - Ensure the HMAC key is kept secret and shared only with trusted processes.
+> - Do not expose ZMQ ports to untrusted networks.
+>
+> #### 3. Pickle Deserialization — Files (CWE-502)
+>
+> `FileStream` (in `file_stream.py`) uses `pickle.load()` to read stream data
+> from files. A crafted pickle file can execute arbitrary code when loaded.
+>
+> **User responsibilities:**
+> - **Only open TensorWatch data files (`.log`, `.pkl`) that you created
+>   yourself or that come from a source you fully trust.**
+> - Treat TensorWatch data files with the same caution as executable scripts.
+>
+> #### 4. Summary of Precautions
+>
+> | Risk | Mitigation | User Action |
+> |------|-----------|-------------|
+> | `eval()` on expressions from clients | HMAC auth + localhost binding | Never expose ports to untrusted networks |
+> | `pickle.loads()` from ZMQ | HMAC verification before deserialization | Keep HMAC key secret |
+> | `pickle.load()` from files | None (user-controlled file paths) | Only load trusted files |
+> | ZMQ port exposure | Binds to `127.0.0.1` by default | Do not change to `0.0.0.0` in untrusted environments |
 
 ## How to Use It
 
