@@ -90,8 +90,8 @@ TensorWatch supports Python 3.x and is tested with PyTorch 0.4-1.x. Most feature
 > | Risk | Mitigation | User Action |
 > |------|-----------|-------------|
 > | `eval()` on expressions from clients | HMAC auth + localhost binding | Never expose ports to untrusted networks |
-> | `pickle.loads()` from ZMQ | HMAC verification before deserialization | Keep HMAC key secret |
-> | `pickle.load()` from files | None (user-controlled file paths) | Only load trusted files |
+> | `pickle.loads()` from ZMQ | HMAC + RestrictedUnpickler | Keep HMAC key secret |
+> | `pickle.load()` from files | RestrictedUnpickler (defense-in-depth) | Only load trusted files |
 > | ZMQ port exposure | Binds to `127.0.0.1` by default | Do not change to `0.0.0.0` in untrusted environments |
 
 ## How to Use It

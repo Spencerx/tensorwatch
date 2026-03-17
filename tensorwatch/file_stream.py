@@ -19,9 +19,10 @@ class FileStream(Stream):
 
     def close(self):
         if not self._file.closed:
+            file_name = os.path.realpath(self._file.name)
             self._file.close()
             self._file = None
-            utils.debug_log('FileStream is closed', os.path.realpath(self._file.name), verbosity=0)
+            utils.debug_log('FileStream is closed', file_name, verbosity=0)
         super(FileStream, self).close()
 
     def write(self, val:Any, from_stream:'Stream'=None):
@@ -56,5 +57,5 @@ class FileStream(Stream):
     def save(self, from_stream:'Stream'=None):
         if not self._file.closed:
             self._file.flush()
-        super(FileStream, self).save(val)
+        super(FileStream, self).save(from_stream)
 
