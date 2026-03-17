@@ -85,13 +85,21 @@ TensorWatch supports Python 3.x and is tested with PyTorch 0.4-1.x. Most feature
 >   yourself or that come from a source you fully trust.**
 > - Treat TensorWatch data files with the same caution as executable scripts.
 >
-> #### 4. Summary of Precautions
+> #### 4. YAML Deserialization
+>
+> The bundled `hiddenlayer` utilities include YAML loading functions. These use
+> `yaml.SafeLoader` by default to prevent arbitrary Python object instantiation
+> from YAML files. Do not override the loader with `yaml.Loader` or
+> `yaml.UnsafeLoader` when processing untrusted YAML input.
+>
+> #### 5. Summary of Precautions
 >
 > | Risk | Mitigation | User Action |
 > |------|-----------|-------------|
 > | `eval()` on expressions from clients | HMAC auth + localhost binding | Never expose ports to untrusted networks |
 > | `pickle.loads()` from ZMQ | HMAC + RestrictedUnpickler | Keep HMAC key secret |
 > | `pickle.load()` from files | RestrictedUnpickler (defense-in-depth) | Only load trusted files |
+> | YAML deserialization | `yaml.SafeLoader` by default | Do not override with unsafe loaders |
 > | ZMQ port exposure | Binds to `127.0.0.1` by default | Do not change to `0.0.0.0` in untrusted environments |
 
 ## How to Use It
