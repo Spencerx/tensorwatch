@@ -12,6 +12,7 @@ import zmq.utils.monitor
 import functools, sys, logging
 from threading import Thread, Event
 from . import utils
+from .safe_pickle import restricted_loads
 import weakref, logging
 
 class ZmqWrapper:
@@ -25,12 +26,21 @@ class ZmqWrapper:
     @staticmethod
     def get_hmac_key() -> bytes:
         """Get or generate the HMAC signing key used to authenticate ZMQ messages.
-        Set ZmqWrapper._hmac_key before calling initialize() to use a specific
-        key (e.g. for multi-process setups where Watcher and WatcherClient run
-        in separate processes).
+
+        Key resolution order:
+        1. ZmqWrapper._hmac_key if set directly (e.g. via application code).
+        2. TENSORWATCH_HMAC_KEY environment variable (hex-encoded, for
+           multi-process setups where Watcher and WatcherClient run in
+           separate processes).
+        3. A random 32-byte key generated with os.urandom (single-process
+           default).
         """
         if ZmqWrapper._hmac_key is None:
-            ZmqWrapper._hmac_key = os.urandom(32)
+            env_key = os.environ.get('TENSORWATCH_HMAC_KEY')
+            if env_key:
+                ZmqWrapper._hmac_key = bytes.fromhex(env_key)
+            else:
+                ZmqWrapper._hmac_key = os.urandom(32)
         return ZmqWrapper._hmac_key
 
     @staticmethod
@@ -52,7 +62,7 @@ class ZmqWrapper:
         expected = hmac.new(ZmqWrapper.get_hmac_key(), payload, hashlib.sha256).digest()
         if not hmac.compare_digest(sig, expected):
             raise ValueError("HMAC verification failed - rejecting untrusted message")
-        return pickle.loads(payload)
+        return restricted_loads(payload)
 
     @staticmethod
     def initialize():

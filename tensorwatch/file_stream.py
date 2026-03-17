@@ -5,6 +5,7 @@ from .stream import Stream
 import pickle, os
 from typing import Any
 from . import utils
+from .safe_pickle import restricted_load
 import time
 
 class FileStream(Stream):
@@ -38,7 +39,7 @@ class FileStream(Stream):
         if self._file is not None:
             self._file.seek(0, 0) # we may filter this stream multiple times
             while not utils.is_eof(self._file):
-                yield pickle.load(self._file)
+                yield restricted_load(self._file)
         for item in super(FileStream, self).read_all():
             yield item
 
@@ -48,7 +49,7 @@ class FileStream(Stream):
         if self._file is not None:
             self._file.seek(0, 0) # we may filter this stream multiple times
             while not utils.is_eof(self._file):
-                stream_item = pickle.load(self._file)
+                stream_item = restricted_load(self._file)
                 self.write(stream_item)
         super(FileStream, self).load()
 

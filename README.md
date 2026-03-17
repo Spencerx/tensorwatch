@@ -58,6 +58,13 @@ TensorWatch supports Python 3.x and is tested with PyTorch 0.4-1.x. Most feature
 > - All incoming ZMQ messages are HMAC-SHA256 verified **before**
 >   deserialization (`ZmqWrapper.verify_and_loads`). Messages with invalid
 >   signatures are rejected without being deserialized.
+> - A `RestrictedUnpickler` blocks known-dangerous modules (`os`,
+>   `subprocess`, `socket`, `ctypes`, etc.) as defense-in-depth.
+> - For multi-process setups, set the `TENSORWATCH_HMAC_KEY` environment
+>   variable to a shared hex-encoded secret (e.g.
+>   `export TENSORWATCH_HMAC_KEY=$(python -c "import os; print(os.urandom(32).hex())")`).
+>   Alternatively, set `ZmqWrapper._hmac_key` directly in code before
+>   calling `initialize()`.
 >
 > **User responsibilities:**
 > - Ensure the HMAC key is kept secret and shared only with trusted processes.
@@ -67,6 +74,11 @@ TensorWatch supports Python 3.x and is tested with PyTorch 0.4-1.x. Most feature
 >
 > `FileStream` (in `file_stream.py`) uses `pickle.load()` to read stream data
 > from files. A crafted pickle file can execute arbitrary code when loaded.
+>
+> **Mitigations in place:**
+> - A `RestrictedUnpickler` blocks known-dangerous modules (`os`,
+>   `subprocess`, etc.) as defense-in-depth. This is **not** a complete
+>   sandbox — determined attackers may find bypasses.
 >
 > **User responsibilities:**
 > - **Only open TensorWatch data files (`.log`, `.pkl`) that you created
