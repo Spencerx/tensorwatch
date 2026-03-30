@@ -3,41 +3,52 @@
 
 """Defense-in-depth RestrictedUnpickler for TensorWatch.
 
-Blocks modules commonly exploited in pickle deserialization attacks while
-allowing the data types that TensorWatch legitimately serializes (numpy
-arrays, torch tensors, TensorWatch data classes, built-in collections, etc.).
+Uses an **allowlist** approach: only modules that TensorWatch legitimately
+needs for serialization are permitted.  Everything else is blocked by default.
 
-WARNING: This is NOT a complete sandbox. A determined attacker may still find
-bypass techniques. Do not load pickle data from untrusted sources.
+Allowed module families:
+  - Python builtins and standard-library data types (collections, datetime,
+    decimal, fractions, numbers, uuid)
+  - Pickle internals (_codecs, copyreg, _collections — used by the pickle
+    protocol itself)
+  - numpy, torch, pandas — data-science libraries whose objects appear in
+    StreamItem values
+  - tensorwatch — the library's own data classes
+
+WARNING: This is NOT a complete sandbox.  Pickle allowlists reduce the attack
+surface dramatically compared to blocklists, but do not eliminate all risk.
+Do not load pickle data from untrusted sources.
 """
 
 import io
 import pickle
 import logging
 
-_BLOCKED_MODULES = frozenset({
-    # OS / filesystem access
-    'os', 'posix', 'nt', 'os.path',
-    'shutil', 'pathlib',
-    'tempfile', 'glob', 'fnmatch',
-    # Process / subprocess execution
-    'subprocess', 'multiprocessing',
-    'pty', 'commands',
-    # Code compilation / execution
-    'code', 'codeop', 'compileall',
-    'importlib', 'runpy', 'pkgutil',
-    # Network
-    'socket', 'http', 'urllib', 'ftplib', 'smtplib', 'xmlrpc',
-    'socketserver', 'asyncio',
-    # Low-level / FFI
-    'ctypes', 'mmap',
-    # Interactive / debug
-    'pdb', 'profile', 'webbrowser',
-    # Signal handling
-    'signal',
+# ---------------------------------------------------------------------------
+# Allowlist — a module is permitted if its top-level package appears here.
+# Any module NOT in this set is rejected outright.
+# ---------------------------------------------------------------------------
+_ALLOWED_PREFIXES = frozenset({
+    # Python built-in / standard-library data types
+    'builtins',
+    'collections', '_collections',   # _collections holds C-accelerated types
+    'datetime',
+    'decimal',
+    'fractions',
+    'numbers',
+    'uuid',
+    # Pickle protocol internals (required for __reduce__ reconstruction)
+    'copyreg',
+    '_codecs',
+    # Data-science libraries
+    'numpy',
+    'torch',
+    'pandas',
+    # TensorWatch's own types
+    'tensorwatch',
 })
 
-# Specific names blocked from builtins module
+# Even within allowed modules, these builtins are too dangerous to permit.
 _BLOCKED_BUILTINS = frozenset({
     'eval', 'exec', 'compile', '__import__',
     'open', 'input', 'breakpoint',
@@ -46,25 +57,32 @@ _BLOCKED_BUILTINS = frozenset({
     'getattr', 'setattr', 'delattr',
 })
 
+_log = logging.getLogger(__name__)
+
 
 class RestrictedUnpickler(pickle.Unpickler):
-    """Unpickler that blocks known-dangerous modules and callables.
+    """Unpickler that only allows classes from explicitly approved modules.
 
-    Allowed: numpy, torch, tensorwatch, collections, standard data types.
-    Blocked: os, subprocess, socket, ctypes, importlib, etc.
+    Uses an allowlist (not a blocklist), so unknown or newly-introduced
+    dangerous modules are blocked by default.
     """
 
     def find_class(self, module, name):
         top_module = module.split('.')[0]
 
-        if top_module in _BLOCKED_MODULES:
+        # Reject any module not in the allowlist
+        if top_module not in _ALLOWED_PREFIXES:
+            _log.warning("Pickle restricted: blocked %s.%s (module '%s' not in allowlist)",
+                         module, name, top_module)
             raise pickle.UnpicklingError(
-                "Blocked: unpickling {}.{} is not allowed "
-                "(module '{}' is restricted)".format(module, name, top_module))
+                "Blocked: module '{}' is not in the allowlist "
+                "(attempted to load {}.{})".format(top_module, module, name))
 
+        # Block dangerous builtins even though 'builtins' is allowed
         if top_module == 'builtins' and name in _BLOCKED_BUILTINS:
+            _log.warning("Pickle restricted: blocked builtins.%s", name)
             raise pickle.UnpicklingError(
-                "Blocked: unpickling builtins.{} is not allowed".format(name))
+                "Blocked: builtins.{} is not allowed".format(name))
 
         return super().find_class(module, name)
 

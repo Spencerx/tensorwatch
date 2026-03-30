@@ -15,6 +15,8 @@ from . import utils
 from .safe_pickle import restricted_loads
 import weakref, logging
 
+_log = logging.getLogger(__name__)
+
 class ZmqWrapper:
 
     _thread:Thread = None
@@ -56,11 +58,18 @@ class ZmqWrapper:
         Raises ValueError if the signature does not match.
         """
         if len(signed_data) < 32:
+            _log.warning("ZMQ security: rejected message too short for HMAC "
+                         "(%d bytes) - possible malformed or unsigned message",
+                         len(signed_data))
             raise ValueError("Message too short to contain HMAC signature")
         sig = signed_data[:32]
         payload = signed_data[32:]
         expected = hmac.new(ZmqWrapper.get_hmac_key(), payload, hashlib.sha256).digest()
         if not hmac.compare_digest(sig, expected):
+            _log.warning("ZMQ security: HMAC verification failed - "
+                         "rejecting untrusted message (%d bytes payload). "
+                         "This may indicate a connection from an unauthorized "
+                         "process or a tampering attempt.", len(payload))
             raise ValueError("HMAC verification failed - rejecting untrusted message")
         return restricted_loads(payload)
 

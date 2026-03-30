@@ -58,8 +58,11 @@ TensorWatch supports Python 3.x and is tested with PyTorch 0.4-1.x. Most feature
 > - All incoming ZMQ messages are HMAC-SHA256 verified **before**
 >   deserialization (`ZmqWrapper.verify_and_loads`). Messages with invalid
 >   signatures are rejected without being deserialized.
-> - A `RestrictedUnpickler` blocks known-dangerous modules (`os`,
->   `subprocess`, `socket`, `ctypes`, etc.) as defense-in-depth.
+> - A `RestrictedUnpickler` uses an **allowlist** of permitted modules
+>   (builtins, collections, numpy, torch, pandas, tensorwatch, and pickle
+>   internals) as defense-in-depth. Any module not explicitly approved is
+>   blocked, which is significantly stronger than the previous blocklist
+>   approach.
 > - For multi-process setups, set the `TENSORWATCH_HMAC_KEY` environment
 >   variable to a shared hex-encoded secret (e.g.
 >   `export TENSORWATCH_HMAC_KEY=$(python -c "import os; print(os.urandom(32).hex())")`).
@@ -76,9 +79,10 @@ TensorWatch supports Python 3.x and is tested with PyTorch 0.4-1.x. Most feature
 > from files. A crafted pickle file can execute arbitrary code when loaded.
 >
 > **Mitigations in place:**
-> - A `RestrictedUnpickler` blocks known-dangerous modules (`os`,
->   `subprocess`, etc.) as defense-in-depth. This is **not** a complete
->   sandbox — determined attackers may find bypasses.
+> - A `RestrictedUnpickler` uses an **allowlist** of permitted modules
+>   as defense-in-depth. Only modules TensorWatch needs (builtins,
+>   collections, numpy, torch, pandas, tensorwatch) are allowed; all
+>   others are blocked by default.
 >
 > **User responsibilities:**
 > - **Only open TensorWatch data files (`.log`, `.pkl`) that you created
@@ -97,8 +101,8 @@ TensorWatch supports Python 3.x and is tested with PyTorch 0.4-1.x. Most feature
 > | Risk | Mitigation | User Action |
 > |------|-----------|-------------|
 > | `eval()` on expressions from clients | HMAC auth + localhost binding | Never expose ports to untrusted networks |
-> | `pickle.loads()` from ZMQ | HMAC + RestrictedUnpickler | Keep HMAC key secret |
-> | `pickle.load()` from files | RestrictedUnpickler (defense-in-depth) | Only load trusted files |
+> | `pickle.loads()` from ZMQ | HMAC + allowlist RestrictedUnpickler | Keep HMAC key secret |
+> | `pickle.load()` from files | Allowlist RestrictedUnpickler (defense-in-depth) | Only load trusted files |
 > | YAML deserialization | `yaml.SafeLoader` by default | Do not override with unsafe loaders |
 > | ZMQ port exposure | Binds to `127.0.0.1` by default | Do not change to `0.0.0.0` in untrusted environments |
 
